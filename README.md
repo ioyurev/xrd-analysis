@@ -1,13 +1,15 @@
 # xrd-analysis
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23892876.svg)](https://doi.org/10.5281/zenodo.23892876)
+
 [Русская версия (README.ru.md)](README.ru.md)
 
 **Autonomous Crystallographic Analysis and Stage-Gate Rietveld / Pawley Refinement Skill**
 
 `xrd-analysis` is an Agent Skill (`SKILL.md`) and Python crystallographic workbench built on top of the open-source [GSAS-II](https://github.com/AdvancedPhotonSource/GSAS-II) calculation engine (`GSASIIscriptable`), `pymatgen`, `gemmi` and `spglib`.
 
-- **Primary repository (GitFlic):** [https://gitflic.ru/project/i-o-yurev/xrd-analysis](https://gitflic.ru/project/i-o-yurev/xrd-analysis) (`git@gitflic.ru:i-o-yurev/xrd-analysis.git`)
-- **Mirror repository (GitHub):** [https://github.com/ioyurev/xrd-analysis](https://github.com/ioyurev/xrd-analysis) (`git@github.com:ioyurev/xrd-analysis.git`)
+- **Primary repository (GitFlic):** [https://gitflic.ru/project/i-o-yurev/xrd-analysis](https://gitflic.ru/project/i-o-yurev/xrd-analysis)
+- **Mirror repository (GitHub):** [https://github.com/ioyurev/xrd-analysis](https://github.com/ioyurev/xrd-analysis)
 
 ## Key Capabilities
 
@@ -65,6 +67,7 @@ uv run python scripts/xrd_sample.py --dir ./my_sample export
 
 Released under the [BSD 3-Clause License](LICENSE) ([Russian translation](LICENSE.ru)). If you use `xrd-analysis` in academic work, please cite it using the metadata in [`CITATION.cff`](CITATION.cff) alongside the underlying crystallographic software and open databases:
 
+- **xrd-analysis:** Yurev, I. O. (2026). *xrd-analysis: Autonomous Crystallographic Analysis and Stage-Gate Rietveld/Pawley Refinement Skill* [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.23892876
 - **GSAS-II:** Toby, B. H. & Von Dreele, R. B. (2013). *GSAS-II: the genesis of a modern open-source all purpose crystallography software package*. Journal of Applied Crystallography, 46, 544–549. https://doi.org/10.1107/S0021889813003531
 - **Crystallography Open Database (COD):**
   - Gražulis, S., Daškevič, A., Merkys, A., Chateigner, D., Lutterotti, L., Quirós, M., Serebryanaya, N. R., Moeck, P., Downs, R. T. & Le Bail, A. (2012). *Crystallography Open Database (COD): an open-access collection of crystal structures and platform for world-wide collaboration*. Nucleic Acids Research, 40, D420–D427. https://doi.org/10.1093/nar/gkr900
