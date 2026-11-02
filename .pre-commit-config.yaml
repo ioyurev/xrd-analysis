@@ -1,0 +1,45 @@
+# Static analysis for the xrd-analysis skill.
+#
+# The parent repository's .pre-commit-config.yaml excludes `.agents/`, so none of
+# these checks run on this code from there. This file closes that gap: the skill
+# is its own git repository, so these hooks fire on its own commits.
+#
+# Run all hooks manually with:  uv run pre-commit run --all-files
+exclude: '^(\.venv/|runs/|\.pytest_cache/|\.ruff_cache/|\.mypy_cache/)'
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.22
+    hooks:
+      - id: ruff
+        args: [ --fix ]
+      - id: ruff-format
+
+  # mypy runs against the [tool.mypy] block of pyproject.toml: strict for all
+  # modules, with legacy modules exempted via [[tool.mypy.overrides]] (ignore_errors = true).
+  #
+  # The hook is launched with `--directory scripts` so module names resolve top-level
+  # without triggering duplicate module name errors from scripts/__init__.py.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict contour)
+        entry: uv run --directory scripts mypy .
+        language: system
+        pass_filenames: false
+        files: ^scripts/.*\.py$
+
+  - repo: local
+    hooks:
+      - id: vulture
+        name: Run vulture (dead code detector)
+        entry: uv run vulture .
+        language: system
+        pass_filenames: false
+        files: \.py$
+
+      - id: check-positional-unpacking
+        name: check positional unpacking from function calls
+        entry: uv run python -c "import pathlib, subprocess, sys; p = pathlib.Path('../../../scripts/check_positional_unpacking.py'); sys.exit(subprocess.call([sys.executable, str(p), '--strict', 'scripts']) if p.is_file() else 0)"
+        language: system
+        pass_filenames: false
+        files: \.py$

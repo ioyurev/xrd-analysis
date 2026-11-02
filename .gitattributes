@@ -1,0 +1,6 @@
+# Canonical line ending for this repository: LF in the index and in the working tree.
+# Git for Windows ships with core.autocrlf=true, which would otherwise rewrite the
+# working tree to CRLF on the next checkout and leave it inconsistent with the LF
+# index: diffs become platform-dependent and byte-level comparisons break.
+# `text=auto` still lets Git detect and skip binary files.
+* text=auto eol=lf

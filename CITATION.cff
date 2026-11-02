@@ -1,0 +1,67 @@
+cff-version: 1.2.0
+title: "xrd-analysis: Autonomous Crystallographic Analysis and Stage-Gate Rietveld/Pawley Refinement Skill"
+message: "If you use this software in your research, please cite it using the metadata below."
+type: software
+version: "0.2.0"
+date-released: "2026-11-01"
+license: BSD-3-Clause
+repository-code: "https://gitflic.ru/project/i-o-yurev/xrd-analysis"
+url: "https://github.com/ioyurev/xrd-analysis"
+abstract: "Autonomous Agent Skill and Python crystallographic workbench driving GSAS-II (GSASIIscriptable) for powder X-ray diffraction pre-inspection, analytical search-match phase identification, isostructural analog generation, Stage-Gate Rietveld and Pawley whole-pattern refinement, residual diagnostics, and crystallochemical validation (Bond Valence Sum, Global Instability Index)."
+authors:
+  - family-names: "Yurev"
+    given-names: "Ilya O."
+    orcid: "https://orcid.org/0000-0002-3030-2259"
+    affiliation: "University of Tyumen"
+keywords:
+  - X-ray diffraction
+  - powder diffraction
+  - Rietveld refinement
+  - Pawley refinement
+  - GSAS-II
+  - crystallography
+  - phase identification
+  - agent skill
+references:
+  - type: article
+    title: "GSAS-II: the genesis of a modern open-source all purpose crystallography software package"
+    authors:
+      - family-names: "Toby"
+        given-names: "Brian H."
+      - family-names: "Von Dreele"
+        given-names: "Robert B."
+    journal: "Journal of Applied Crystallography"
+    year: 2013
+    volume: 46
+    start: 544
+    end: 549
+    doi: "10.1107/S0021889813003531"
+  - type: article
+    title: "Crystallography Open Database (COD): an open-access collection of crystal structures and platform for world-wide collaboration"
+    authors:
+      - family-names: "Gražulis"
+        given-names: "Saulius"
+      - family-names: "Daškevič"
+        given-names: "Adriana"
+      - family-names: "Merkys"
+        given-names: "Andrius"
+      - family-names: "Chateigner"
+        given-names: "Daniel"
+      - family-names: "Lutterotti"
+        given-names: "Luca"
+      - family-names: "Quirós"
+        given-names: "Miguel"
+      - family-names: "Serebryanaya"
+        given-names: "Nadezhda R."
+      - family-names: "Moeck"
+        given-names: "Peter"
+      - family-names: "Downs"
+        given-names: "Robert T."
+      - family-names: "Le Bail"
+        given-names: "Armel"
+    journal: "Nucleic Acids Research"
+    year: 2012
+    volume: 40
+    start: D420
+    end: D427
+    doi: "10.1093/nar/gkr900"

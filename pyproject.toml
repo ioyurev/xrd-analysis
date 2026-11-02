@@ -1,0 +1,143 @@
+[project]
+name = "xrd-analysis"
+version = "0.2.0"
+description = "Autonomous crystallographic analysis of powder X-ray diffraction patterns"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Ilya O. Yurev" },
+]
+keywords = ["xrd", "crystallography", "rietveld", "pawley", "gsas-ii", "agent-skill"]
+# The floor is 3.11, not 3.10: the GSAS-II binaries this skill drives are built for
+# p3.11, SKILL.md already states 3.11+, and the rendering package requires it as
+# well. The previous >=3.10 was a claim nothing could satisfy.
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # NumPy is capped below 2 **for a measured reason**, not by habit. Relaxing it was tried:
+    # under numpy 2.4.6 the Materials Project client does import, but twelve GSAS-II workbench
+    # tests fail and eight more start skipping -- 132 passed / 12 failed / 10 skipped against
+    # 152 passed / 2 skipped under 1.26.4. The engine that does the actual work outranks an
+    # optional retrieval route, so the cap stays.
+    #
+    # The other route was tried and also fails: pinning pyarrow<17 (the last line accepting
+    # NumPy 1.x) drags mp-api down to 0.45.13, which then mismatches emmet-core 0.87.3 with
+    # "cannot import name 'BSPathType'". Making the MP client usable while the engine keeps
+    # NumPy 1.26 therefore needs a **separate environment**, not another pin in this file.
+    "numpy>=1.26.0,<2.0.0",
+    "scipy>=1.12.0",
+    "pymatgen>=2024.1.1",
+    "gemmi>=0.6.5",
+    "spglib>=2.3.0",
+    "diffpy-srfit>=2.2.0",
+    "cctbx-base>=2024.1",
+    "loguru>=0.7.2",
+    "matplotlib>=3.10.9",
+    "pycifrw>=5.0.1",
+    "python-dotenv>=1.0.0",
+    "xrdplot",
+]
+
+[project.urls]
+Repository = "https://gitflic.ru/project/i-o-yurev/xrd-analysis"
+Mirror = "https://github.com/ioyurev/xrd-analysis"
+
+[tool.uv.sources]
+xrdplot = { git = "https://gitflic.ru/project/i-o-yurev/xrdplot.git" }
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["scripts"]
+markers = [
+    "network: требует живого внешнего сервиса; по умолчанию не запускается, включается --run-network",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+    "mypy>=1.13.0",
+    "vulture>=2.14",
+]
+
+[tool.mypy]
+# Modules are imported top-level (`from instrument import ...`) through a
+# sys.path.insert of the scripts directory, but scripts/ also holds an
+# __init__.py. mypy would therefore see two names for one file and abort with
+# "Source file found twice". `mypy_path` + `explicit_package_bases` fixes the
+# name to the file stem, which is how the code actually imports it.
+#
+# Run from inside scripts/:
+#     cd scripts && uv run mypy <module>.py ...
+# `scripts/__init__.py` was left in place deliberately; removing it would be a
+# structural change to the skill and was not decided.
+mypy_path = "$MYPY_CONFIG_FILE_DIR/scripts"
+explicit_package_bases = true
+ignore_missing_imports = true
+strict = true
+
+# Legacy modules predate the strict contour and are checked at default
+# strictness. They are not gated: `ignore_errors` keeps them out of the strict
+# pass, which otherwise pulls their pre-existing errors in through imports (the
+# strict modules reuse cif_retriever.ElementFilter as the single definition of
+# element semantics). Run `uv run mypy *.py` from inside scripts/ to see them.
+[[tool.mypy.overrides]]
+module = [
+    "cif_retriever",
+    "export",
+    "gsas2_adapter",
+    "install_gsas2",
+    "rietveld_params",
+    "stage_gate_rietveld",
+    "xrd_pipeline",
+    "xrd_plot",
+    "xrd_project",
+    "xrd_sample",
+]
+strict = false
+ignore_errors = true
+
+[tool.vulture]
+exclude = [".venv", ".pytest_cache", ".ruff_cache", "runs"]
+ignore_decorators = ["@pytest.fixture"]
+ignore_names = [
+    # pytest вызывает эти хуки по имени, из кода скилла их никто не вызывает
+    "pytest_addoption",
+    "pytest_collection_modifyitems",
+    # Mocks
+    "kwargs",
+    "returncode",
+    # Mock method parameters whose names must match the real GSAS-II / mp-api signatures
+    "makeBack",
+    "conventional_unit_cell",
+    # Fields of the live mp-api document. cif_retriever requests them as strings in
+    # ``common_fields`` and reads them through one generic extractor, so the access is
+    # real but traceable only by name. Each name must match the live API, exactly as
+    # the mock names above must.
+    "formula_pretty",
+    "energy_above_hull",
+    "symmetry",
+    # An attribute of spglib, not of this package: ``spglib.error.OLD_ERROR_HANDLING =
+    # False`` in gatekeeper.py holds legacy error handling across spglib generations.
+    # No reader exists in this repository because the reader is the third-party library
+    # itself, which is why the assignment looks unused to a static analyzer.
+    "OLD_ERROR_HANDLING",
+    # sqlite3.Connection attribute configured for dictionaries/named tuples
+    "row_factory",
+]
+# Findings of the 60 percent class -- unused function, attribute and variable -- are the
+# ones this detector exists for, and they are invisible at a threshold above 60. A run at
+# 70 reports only unreachable code, so a clean run there says nothing about dead code;
+# that was established by measurement, not by reading the confidence tables. The value is
+# therefore the lowest one that keeps the report readable, and every remaining finding of
+# this class must be resolved rather than filtered.
+min_confidence = 60
