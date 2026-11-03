@@ -37,10 +37,6 @@ COD_HSRDB_PATH=/path/to/COD24_HS4x.hsrdb
 
 # Optional: user-licensed local ICDD PDF-2 installation directory
 PDF2_DATA_DIR=/path/to/PDF2
-
-# Optional: Materials Project API key and Python >=3.11 interpreter with mp-api installed
-MP_API_KEY=your_mp_api_key
-MP_PYTHON=/path/to/mp_venv/bin/python
 ```
 
 ## Quick Start

@@ -1,6 +1,6 @@
 [project]
 name = "xrd-analysis"
-version = "0.2.0"
+version = "0.3.0"
 description = "Autonomous crystallographic analysis of powder X-ray diffraction patterns"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -116,16 +116,8 @@ ignore_names = [
     # Mocks
     "kwargs",
     "returncode",
-    # Mock method parameters whose names must match the real GSAS-II / mp-api signatures
+    # Mock method parameter whose name must match the real GSAS-II signature
     "makeBack",
-    "conventional_unit_cell",
-    # Fields of the live mp-api document. cif_retriever requests them as strings in
-    # ``common_fields`` and reads them through one generic extractor, so the access is
-    # real but traceable only by name. Each name must match the live API, exactly as
-    # the mock names above must.
-    "formula_pretty",
-    "energy_above_hull",
-    "symmetry",
     # An attribute of spglib, not of this package: ``spglib.error.OLD_ERROR_HANDLING =
     # False`` in gatekeeper.py holds legacy error handling across spglib generations.
     # No reader exists in this repository because the reader is the third-party library

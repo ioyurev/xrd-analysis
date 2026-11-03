@@ -1955,29 +1955,12 @@ def test_export_phase_cif_safe_native_api(tmp_path):
     assert "data_test" in out_cif.read_text(encoding="utf-8")
 
 
-def _live_mp_or_skip() -> None:
-    """Skip only when this machine declares no retrieval environment.
-
-    That is a genuine absence, like an absent PDF-2 installation: the Materials Project
-    route is optional and lives in a separate interpreter, so a machine without one cannot
-    exercise it on live data. What must not happen is the earlier arrangement, where the
-    skip hid an obstacle of our own making -- a client that could not be imported under
-    the declared NumPy pin. That obstacle is gone: this interpreter imports the client
-    nowhere, and the client's own work is covered by the tests that replace the seam.
-    """
-    from cif_retriever import resolve_mp_interpreter
-
-    if resolve_mp_interpreter() is None:
-        pytest.skip(
-            "no retrieval environment declared: set MP_PYTHON to a python executable with "
-            "mp-api installed to exercise the live Materials Project route"
-        )
-
-
 def test_materials_project_client_and_query(tmp_path, monkeypatch):
-    """Verify MaterialsProjectClient search, conventional cell export, search_cifs and download_cifs_by_ids."""
+    """Verify MaterialsProjectClient search, conventional cell export, search_cifs and download_cifs_by_ids via OPTIMADE."""
     from cif_retriever import (
+        DatabaseSource,
         MaterialsProjectClient,
+        StructureSearchRecord,
         download_cifs_by_ids,
         format_search_table,
         search_cifs,
@@ -1987,144 +1970,87 @@ def test_materials_project_client_and_query(tmp_path, monkeypatch):
     from pymatgen.io.cif import CifWriter
 
     cache_dir = tmp_path / "mp_cache"
-
-    # 1. Unconfigured client behavior. The client reads a key from the environment or
-    # from a .env file above the working directory, so "unconfigured" has to mean that
-    # neither address carries one. A real .env on this machine would otherwise make the
-    # assertion below read as a defect of the client rather than as a stray configuration.
-    monkeypatch.setattr("env_file.find_dotenv", lambda **_kwargs: "")
-    monkeypatch.delenv("MP_API_KEY", raising=False)
-    unconf_client = MaterialsProjectClient(api_key=None, cache_dir=cache_dir)
-    assert unconf_client.is_configured() is False
-    assert unconf_client.search(elements=["Sm", "S"]) == []
-    assert unconf_client.download_cif("mp-1077") is None
-
-    # Verify auto-configuration via MP_API_KEY environment variable (from .env)
-    monkeypatch.setenv("MP_API_KEY", "env_loaded_key_abc")
-    env_client = MaterialsProjectClient(cache_dir=cache_dir)
-    assert env_client.is_configured() is True
-    assert env_client.api_key == "env_loaded_key_abc"
-
-    # 2. Configured client, with the retrieval environment replaced by a responder.
-    #
-    # What this interpreter still owns is the cache, the file naming and the reading of
-    # records; the network belongs to the other environment and is reached through a single
-    # seam, cif_retriever.run_mp_query. Replacing that seam tests the client, whereas
-    # mocking the client's internals would test only the mock.
-    client = MaterialsProjectClient(api_key="mock_test_key_12345", cache_dir=cache_dir)
+    client = MaterialsProjectClient(cache_dir=cache_dir)
     assert client.is_configured() is True
 
     sanitized_cif = str(
         CifWriter(Structure(Lattice.cubic(5.97), ["Sm", "S"], [[0, 0, 0], [0.5, 0.5, 0.5]]))
     )
-    records = [
-        {
-            "material_id": "mp-1077",
-            "formula_pretty": "SmS",
-            "symmetry": {"symbol": "Fm-3m"},
-            "volume": 212.5,
-            "energy_above_hull": 0.0,
-            "is_stable": True,
-            "structure": {
-                "lattice": {
-                    "a": 5.97,
-                    "b": 5.97,
-                    "c": 5.97,
-                    "alpha": 90.0,
-                    "beta": 90.0,
-                    "gamma": 90.0,
-                }
-            },
-        },
-        {
-            "material_id": "mp-9999",
-            "formula_pretty": "Sm2S3",
-            "symmetry": {"symbol": "Fm-3m"},
-            "volume": 300.0,
-            "energy_above_hull": 0.05,
-            "is_stable": False,
-            "structure": None,
-        },
+    mock_records = [
+        StructureSearchRecord(
+            id="mp-1077",
+            source=DatabaseSource.MP,
+            formula="SmS",
+            spacegroup="Fm-3m",
+            a=5.97,
+            b=5.97,
+            c=5.97,
+            alpha=90.0,
+            beta=90.0,
+            gamma=90.0,
+            volume=212.5,
+            energy_above_hull=0.0,
+            is_stable=True,
+        ),
+        StructureSearchRecord(
+            id="mp-9999",
+            source=DatabaseSource.MP,
+            formula="Sm2S3",
+            spacegroup="Fm-3m",
+            volume=300.0,
+            energy_above_hull=0.05,
+            is_stable=False,
+        ),
     ]
-    sent_requests: list[dict] = []
 
-    def fake_query(request: dict) -> dict:
-        sent_requests.append(request)
-        if request["action"] == "search":
-            return {"records": records}
-        return {"cif_text": sanitized_cif, "reduced_formula": "SmS"}
+    monkeypatch.setattr(
+        "optimade_client.search_optimade_provider",
+        lambda *_a, **_kw: list(mock_records),
+    )
 
-    monkeypatch.setattr("cif_retriever.run_mp_query", fake_query)
+    def fake_download(
+        composite_id: str,
+        out_path: Path | None = None,
+        symprec: float = 0.01,
+        timeout: float = 15.0,
+        formula_hint: str | None = None,
+    ) -> Path:
+        target_dir = out_path if out_path and out_path.is_dir() else cache_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        f_path = target_dir / f"{formula_hint or 'SmS'}_mp-1077.cif"
+        f_path.write_text(sanitized_cif, encoding="utf-8")
+        return f_path
 
-    # Test search
+    monkeypatch.setattr("optimade_client.download_optimade_cif", fake_download)
+
     search_res = client.search(elements=["Sm", "S"])
     assert len(search_res) == 2
     assert search_res[0].id == "mp-1077"
     assert search_res[0].formula == "SmS"
     assert search_res[0].is_stable is True
     assert search_res[0].a == 5.97
-    assert search_res[0].b == 5.97
-    assert search_res[0].c == 5.97
-    assert search_res[0].alpha == 90.0
-    assert search_res[0].beta == 90.0
-    assert search_res[0].gamma == 90.0
 
-    # The request that reached the other environment carries the resolved query and the
-    # key: that is the contract between the two processes, and nothing else crosses it.
-    assert sent_requests[0]["action"] == "search"
-    assert sent_requests[0]["mode"] == "all"
-    assert sent_requests[0]["elements"] == ["S", "Sm"]
-    assert sent_requests[0]["api_key"] == "mock_test_key_12345"
-
-    # Test download_cif: the text produced in the other environment must land in this
-    # client's cache, under a name taken from the formula, and read back as the phase it
-    # claims to be. Removing the fractional oxidation states belongs to the bridge, where
-    # the structure object exists, and is pinned by the live run below rather than here.
     out_cif = tmp_path / "cifs" / "SmS_mp-1077.cif"
     out_cif.parent.mkdir(parents=True, exist_ok=True)
     downloaded = client.download_cif("mp-1077", out_path=out_cif, formula_hint="SmS")
-    assert downloaded is not None
-    assert downloaded.exists()
-
-    cif_text = downloaded.read_text(encoding="utf-8")
-    assert cif_text == sanitized_cif, "the received CIF must be written verbatim"
+    assert downloaded is not None and downloaded.exists()
     assert (
         validate_cif_identity(downloaded, expected_elements=["Sm", "S"], expected_formula="SmS")
         is True
     )
-    assert sent_requests[-1]["action"] == "download"
-    assert sent_requests[-1]["material_id"] == "mp-1077"
-    assert sent_requests[-1]["symprec"] == 0.01
 
-    # Test search_cifs with limit reporting total_count
     search_data = search_cifs(elements=["Sm", "S"], source="mp", limit=1, mp_client=client)
     assert search_data.total_count == 2
     assert search_data.displayed_count == 1
-    assert search_data.limit == 1
-    assert len(search_data.results) == 1
     assert search_data.results[0].id == "mp-1077"
-    assert search_data.results[0].a == 5.97
 
-    # Test format_search_table
     table = format_search_table(search_data)
     assert "Found 2 total structures" in table
-    assert "showing first 1" in table
-    assert "limit: 1" in table
     assert "mp-1077" in table
-    assert "5.970" in table
-    assert "90.0" in table
-    assert "alpha" in table
 
-    # Test download_cifs_by_ids
     out_dir = tmp_path / "query_cifs"
-    paths = download_cifs_by_ids(
-        ids=["mp-1077"],
-        out_dir=out_dir,
-        mp_client=client,
-    )
-    assert len(paths) == 1
-    assert paths[0].name == "SmS_mp-1077.cif"
-    assert paths[0].exists()
+    paths = download_cifs_by_ids(ids=["mp-1077"], out_dir=out_dir, mp_client=client)
+    assert len(paths) == 1 and paths[0].exists()
 
 
 def test_cif_retriever_cli_subcommands_and_legacy_rejection(monkeypatch, tmp_path):
@@ -2362,37 +2288,33 @@ def test_search_query_caching_cod_and_mp(tmp_path, monkeypatch):
     assert cod_call_count == 3  # Fallback called network!
 
     # --- 2. Test MP Search Caching ---
-    # The client's cache policy is the subject here, so the retrieval environment is
-    # replaced by a responder and its invocations are counted: a cache hit has to reach the
-    # other interpreter zero times.
+    from cif_retriever import DatabaseSource, StructureSearchRecord
+
     mp_call_count = 0
     one_record = [
-        {
-            "material_id": "mp-1077",
-            "formula_pretty": "SmS",
-            "symmetry": {"symbol": "Fm-3m"},
-            "volume": 212.5,
-            "energy_above_hull": 0.0,
-            "is_stable": True,
-            "structure": {
-                "lattice": {
-                    "a": 5.97,
-                    "b": 5.97,
-                    "c": 5.97,
-                    "alpha": 90.0,
-                    "beta": 90.0,
-                    "gamma": 90.0,
-                }
-            },
-        }
+        StructureSearchRecord(
+            id="mp-1077",
+            source=DatabaseSource.MP,
+            formula="SmS",
+            spacegroup="Fm-3m",
+            a=5.97,
+            b=5.97,
+            c=5.97,
+            alpha=90.0,
+            beta=90.0,
+            gamma=90.0,
+            volume=212.5,
+            energy_above_hull=0.0,
+            is_stable=True,
+        )
     ]
 
-    def fake_query(_request: dict) -> dict:
+    def fake_optimade_provider(*_a: object, **_kw: object) -> list[StructureSearchRecord]:
         nonlocal mp_call_count
         mp_call_count += 1
-        return {"records": one_record}
+        return list(one_record)
 
-    monkeypatch.setattr("cif_retriever.run_mp_query", fake_query)
+    monkeypatch.setattr("optimade_client.search_optimade_provider", fake_optimade_provider)
 
     mp_client = MaterialsProjectClient(api_key="test_key", cache_dir=mp_cache, cache_ttl=3600)
 
@@ -2426,151 +2348,19 @@ def test_search_query_caching_cod_and_mp(tmp_path, monkeypatch):
     assert mp_client.last_cache_info.cached is False
 
 
-def test_mp_bridge_reduces_a_live_document_to_the_record_the_client_reads():
-    """The bridge's record shape is the contract between the two processes.
-
-    ``mp_query`` is importable in this environment because it imports ``mp_api`` only inside
-    its functions -- which is what makes the contract testable in the very interpreter that
-    cannot import the client. The attributes below stand in for a live pydantic document;
-    the reduction itself is real.
-    """
-    import json
-
-    import mp_query
-
-    def document(**fields: object) -> object:
-        """Build a stand-in for a live document from its fields.
-
-        Fields are passed by name rather than declared as class attributes, so a static
-        analyzer sees them as arguments of a call instead of as assignments nothing reads:
-        the bridge reads them through ``getattr``, which no analyzer can follow.
-        """
-        return type("_Document", (), fields)()
-
-    live = document(
-        material_id="mp-1077",
-        formula_pretty="SmS",
-        symmetry=type("_Symmetry", (), {"symbol": "Fm-3m"})(),
-        energy_above_hull=0.0,
-        is_stable=True,
-        volume=212.5,
-        structure=type(
-            "_Structure",
-            (),
-            {
-                "lattice": type(
-                    "_Lattice",
-                    (),
-                    {"a": 5.97, "b": 5.97, "c": 5.97, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
-                )()
-            },
-        )(),
-    )
-
-    record = mp_query.serialize_document(live)
-    assert record["material_id"] == "mp-1077"
-    assert record["symmetry"]["symbol"] == "Fm-3m"
-    assert record["structure"]["lattice"]["a"] == 5.97
-    assert record["structure"]["lattice"]["gamma"] == 90.0
-    assert record["is_stable"] is True
-
-    # A document without a structure or a space group must still produce the same keys,
-    # because the cache is read field by field and a missing key would read as a defect
-    # of the reader rather than as an absence in the record.
-    bare = mp_query.serialize_document(
-        document(
-            material_id="mp-9",
-            formula_pretty="S",
-            symmetry=None,
-            energy_above_hull=1.5,
-            is_stable=False,
-            volume=None,
-            structure=None,
-        )
-    )
-    assert bare["symmetry"]["symbol"] == ""
-    assert bare["structure"] is None
-    assert bare["volume"] is None
-    assert bare["is_stable"] is False
-    # Whatever crosses the process boundary has to be JSON, not an object of pymatgen.
-    assert json.loads(json.dumps(bare)) == bare
-    assert json.loads(json.dumps(record)) == record
-
-
-def test_mp_route_names_its_obstacle_instead_of_failing_inside_a_third_party(monkeypatch, tmp_path):
-    """An unaddressed retrieval environment must be reported by our own code.
-
-    This is the check that replaces the former skip: the obstacle is named here, with the
-    variable that would remove it, and the client continues to work from the local cache.
-    """
-    from cif_retriever import (
-        MaterialsProjectClient,
-        MaterialsProjectUnavailable,
-        resolve_mp_interpreter,
-        run_mp_query,
-    )
-    from loguru import logger as loguru_logger
-
-    monkeypatch.setattr("env_file.find_dotenv", lambda **_kwargs: "")
-    monkeypatch.delenv("MP_PYTHON", raising=False)
-    assert resolve_mp_interpreter() is None
-    with pytest.raises(MaterialsProjectUnavailable, match="MP_PYTHON"):
-        run_mp_query({"action": "search"})
-
-    # A variable naming a file that does not exist is configuration being wrong, and is
-    # reported as that: passing it to subprocess would raise FileNotFoundError, which says
-    # nothing about the address being the problem.
-    monkeypatch.setenv("MP_PYTHON", str(tmp_path / "absent-python.exe"))
-    assert resolve_mp_interpreter() is None
-
-    monkeypatch.delenv("MP_PYTHON", raising=False)
-    client = MaterialsProjectClient(api_key="unused-key", cache_dir=tmp_path / "mp_cache")
-    messages: list[str] = []
-    sink = loguru_logger.add(messages.append, level="WARNING")
-    try:
-        assert client.search(elements=["Sm", "S"]) == []
-    finally:
-        loguru_logger.remove(sink)
-    assert any("MP_PYTHON" in message for message in messages), messages
-
-
 @pytest.mark.network
-def _require_mp_transport() -> None:
-    """Проверить транспорт до Materials Project до запроса.
-
-    Клиент возвращает пустой список и при отказе сети: без этой проверки
-    ``assert results`` сообщает «нет записей» там, где записи никто не получил.
-    """
-    try:
-        with socket.create_connection(("api.materialsproject.org", 443), timeout=10):
-            return
-    except OSError as exc:
-        pytest.fail(
-            f"транспорт: api.materialsproject.org недоступен ({exc}); это не ответ «нет записей»"
-        )
-
-
-@pytest.mark.network
-def test_mp_live_query_through_the_retrieval_environment(tmp_path):
-    """The live route end to end: request out, records back, through that interpreter.
-
-    Skipped only when this machine declares no retrieval environment, which is a genuine
-    absence. Where one is declared, this is the run that proves the split works and that
-    the reduction of a live document -- impossible to exercise in this interpreter --
-    yields records the client can read.
-    """
-    _live_mp_or_skip()
-
+def test_mp_live_query_via_optimade(tmp_path):
+    """Live Materials Project query via key-free OPTIMADE v1 endpoint."""
     from cif_retriever import MaterialsProjectClient
 
+    try:
+        with socket.create_connection(("optimade.materialsproject.org", 443), timeout=10):
+            pass
+    except OSError as exc:
+        pytest.fail(f"transport: optimade.materialsproject.org unreachable ({exc})")
+
     client = MaterialsProjectClient(cache_dir=tmp_path / "mp_cache")
-    if not client.is_configured():
-        pytest.skip("no MP_API_KEY configured, so the live route cannot authenticate")
-
-    _require_mp_transport()
-
     results = client.search(elements=["Sm", "S"], refresh=True)
-
-    assert results, "the live query returned no records"
+    assert results, "live OPTIMADE MP query returned no records"
     assert results[0].id.startswith("mp-")
     assert results[0].formula

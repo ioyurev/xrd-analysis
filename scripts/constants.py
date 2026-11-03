@@ -8,6 +8,25 @@
 
 from __future__ import annotations
 
+import tomllib
+from pathlib import Path
+
+
+def _resolve_version() -> str:
+    """Read package version from pyproject.toml (SSOT)."""
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    if pyproject.is_file():
+        with pyproject.open("rb") as f:
+            data = tomllib.load(f)
+        proj = data.get("project")
+        if isinstance(proj, dict) and "version" in proj:
+            return str(proj["version"])
+    return "0.0.0"
+
+
+#: Версия пакета xrd-analysis, прочитанная из pyproject.toml.
+VERSION: str = _resolve_version()
+
 #: Длина волны Cu Kα1 по умолчанию для рецептов образца и диагностики, Å.
 DEFAULT_WAVELENGTH_KA1: float = 1.5406
 
@@ -90,4 +109,5 @@ __all__ = [
     "PHASE_RF_DOMINANT_PERCENT",
     "PHASE_RF_SUBDOMINANT_PERCENT",
     "RULE9_SHIFT_SIGMA_RATIO",
+    "VERSION",
 ]

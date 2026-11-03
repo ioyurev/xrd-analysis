@@ -2,12 +2,12 @@ cff-version: 1.2.0
 title: "xrd-analysis: Autonomous Crystallographic Analysis and Stage-Gate Rietveld/Pawley Refinement Skill"
 message: "If you use this software in your research, please cite it using the metadata below."
 type: software
-version: "0.2.0"
+version: "0.3.0"
 doi: "10.5281/zenodo.23892876"
 identifiers:
   - type: doi
     value: "10.5281/zenodo.23892876"
-date-released: "2026-11-01"
+date-released: "2026-11-03"
 license: BSD-3-Clause
 repository-code: "https://gitflic.ru/project/i-o-yurev/xrd-analysis"
 url: "https://github.com/ioyurev/xrd-analysis"

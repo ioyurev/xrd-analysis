@@ -167,6 +167,7 @@ def plot_gsas2_histogram(
     )
     settings = Settings(
         dpi=dpi,
+        panel_size=(7.0, 3.5),
         # Одна панель — буквенная метка (a) лишняя; R_B и доли фаз включаем.
         show_panel_labels=False,
         show_rb=True,

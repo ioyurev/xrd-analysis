@@ -37,10 +37,6 @@ COD_HSRDB_PATH=/path/to/COD24_HS4x.hsrdb
 
 # Опционально: путь к локальной лицензионной установке ICDD PDF-2 пользователя
 PDF2_DATA_DIR=/path/to/PDF2
-
-# Опционально: API-ключ Materials Project и путь к интерпретатору Python с пакетом mp-api
-MP_API_KEY=your_mp_api_key
-MP_PYTHON=/path/to/mp_venv/bin/python
 ```
 
 ## Быстрый старт

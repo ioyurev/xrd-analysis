@@ -14,7 +14,6 @@ import json
 import os
 import re
 import sqlite3
-import subprocess
 import sys
 import time
 import urllib.parse
@@ -32,6 +31,7 @@ class DatabaseSource(StrEnum):
 
     COD = "cod"
     MP = "mp"
+    OPTIMADE = "optimade"
     ALL = "all"
 
 
@@ -561,111 +561,14 @@ class CodClient:
         return None
 
 
-#: Environment variable naming the interpreter of the retrieval environment. The
-#: Materials Project client cannot share an interpreter with the engine (see
-#: ``mp_query.py``), so the retrieval route lives in a second environment and this
-#: variable is how it is addressed. Like ``PDF2_DATA_DIR`` it is configuration, read
-#: from the environment and, when not exported, from the ``.env`` file.
-MP_PYTHON_ENV = "MP_PYTHON"
-
-#: The bridge that runs under that interpreter; the only file importing mp_api.client.
-MP_BRIDGE_PATH = Path(__file__).resolve().parent / "mp_query.py"
-
-
-class MaterialsProjectUnavailable(RuntimeError):
-    """The retrieval route could not be used, and the reason is known.
-
-    Raised instead of a bare import failure so the caller reports a named obstacle --
-    a missing interpreter, a missing key, a refused connection -- rather than an
-    exception raised inside a third-party package.
-    """
-
-
-def resolve_mp_interpreter() -> str | None:
-    """Return the interpreter of the retrieval environment, or None when unaddressed.
-
-    A path that does not exist is reported and treated as unaddressed: silently
-    handing a wrong path to ``subprocess`` would produce a ``FileNotFoundError`` that
-    says nothing about the configuration being the problem.
-    """
-    load_env_file()
-    candidate = os.environ.get(MP_PYTHON_ENV)
-    if not candidate or not candidate.strip():
-        return None
-    path = Path(candidate.strip())
-    if not path.is_file():
-        logger.warning("{} names {}, which is not an existing file", MP_PYTHON_ENV, candidate)
-        return None
-    return str(path)
-
-
-def run_mp_query(request: dict[str, Any]) -> dict[str, Any]:
-    """Send one request to the retrieval environment and return its answer.
-
-    The request travels as JSON on stdin, which is also how the API key travels: a
-    command line is readable by every process on the machine, so the key does not go
-    into argv.
-
-    :raises MaterialsProjectUnavailable: when no interpreter is addressed, the bridge is
-        missing, the second environment refuses the request, or it answers with something
-        that is not JSON. Each case names its own obstacle.
-    """
-    interpreter = resolve_mp_interpreter()
-    if interpreter is None:
-        raise MaterialsProjectUnavailable(
-            f"the Materials Project route is not addressed in this environment: set "
-            f"{MP_PYTHON_ENV} to the python executable of an environment with mp-api "
-            f"installed (the engine's own interpreter cannot import it, because "
-            f"mp_api.client needs NumPy >= 2 while the GSAS-II binaries need NumPy < 2)"
-        )
-    if not MP_BRIDGE_PATH.is_file():
-        raise MaterialsProjectUnavailable(f"bridge module is missing: {MP_BRIDGE_PATH}")
-
-    try:
-        completed = subprocess.run(
-            [interpreter, str(MP_BRIDGE_PATH)],
-            input=json.dumps(request),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=600,
-            # The return code is inspected below: a nonzero exit is turned into a named
-            # obstacle with the bridge's own message, so raising here would hide it.
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise MaterialsProjectUnavailable(
-            f"could not run the retrieval interpreter {interpreter}: {exc}"
-        ) from exc
-
-    if completed.returncode != 0:
-        detail = (completed.stderr or "").strip().splitlines()
-        reason = detail[-1] if detail else f"exit code {completed.returncode}"
-        raise MaterialsProjectUnavailable(reason)
-
-    try:
-        answer = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise MaterialsProjectUnavailable(
-            f"the retrieval environment answered with something that is not JSON: {exc}"
-        ) from exc
-    if not isinstance(answer, dict):
-        raise MaterialsProjectUnavailable("the retrieval environment answered with a non-object")
-    return answer
-
-
 class MaterialsProjectClient:
-    """Client for Materials Project, addressed through the retrieval environment.
-
-    The client keeps the cache, the freshness policy and the record reading; the network
-    calls belong to the second interpreter, reached through :func:`run_mp_query`.
-    """
+    """Client for Materials Project via the official key-free OPTIMADE v1 gateway."""
 
     def __init__(
         self,
         api_key: str | None = None,
         cache_dir: Path | None = None,
-        timeout: int = 30,
+        timeout: int = 20,
         cache_ttl: float = DEFAULT_SEARCH_CACHE_TTL,
     ) -> None:
         if cache_dir is None:
@@ -682,8 +585,8 @@ class MaterialsProjectClient:
         self.api_key = api_key or os.environ.get("MP_API_KEY")
 
     def is_configured(self) -> bool:
-        """Check if an API key is provided."""
-        return bool(self.api_key and self.api_key.strip())
+        """Return True: the OPTIMADE v1 endpoint of Materials Project requires no API key."""
+        return True
 
     def search(
         self,
@@ -691,7 +594,9 @@ class MaterialsProjectClient:
         elements: list[str] | None = None,
         refresh: bool = False,
     ) -> list[StructureSearchRecord]:
-        """Search Materials Project for all structures matching chemical element criteria."""
+        """Search Materials Project via OPTIMADE v1 for structures matching element criteria."""
+        from optimade_client import KNOWN_PROVIDERS, search_optimade_provider
+
         if filter is None:
             if not elements:
                 self.last_cache_info = CacheStatus()
@@ -711,159 +616,86 @@ class MaterialsProjectClient:
             self.last_cache_info = CacheStatus()
             return []
 
-        raw_docs: list[Any] = []
-        is_from_cache = False
-        cache_mtime = 0.0
-
         if not refresh and cache_file.exists():
             try:
                 mtime = cache_file.stat().st_mtime
                 if (time.time() - mtime) < self.cache_ttl:
                     payload = json.loads(cache_file.read_text(encoding="utf-8"))
-                    if isinstance(payload, dict) and "records" in payload:
-                        raw_docs = payload["records"]
-                        is_from_cache = True
-                        cache_mtime = float(payload.get("timestamp", mtime))
-                    elif isinstance(payload, list):
-                        raw_docs = payload
-                        is_from_cache = True
-                        cache_mtime = mtime
+                    raw_list = (
+                        payload.get("records", [])
+                        if isinstance(payload, dict)
+                        else (payload if isinstance(payload, list) else [])
+                    )
+                    ts = (
+                        float(payload.get("timestamp", mtime))
+                        if isinstance(payload, dict)
+                        else mtime
+                    )
+                    cached_results: list[StructureSearchRecord] = []
+                    for item in raw_list:
+                        if not isinstance(item, dict):
+                            continue
+                        formula_str = str(item.get("formula") or item.get("formula_pretty") or "")
+                        if not filter.matches(extract_elements(formula_str)):
+                            continue
+                        raw_id = str(item.get("id") or item.get("material_id") or "")
+                        clean_mp_id = raw_id if raw_id.startswith("mp-") else f"mp-{raw_id}"
+                        cached_results.append(
+                            StructureSearchRecord(
+                                id=clean_mp_id,
+                                source=DatabaseSource.MP,
+                                formula=formula_str,
+                                spacegroup=str(item.get("spacegroup") or ""),
+                                a=_float_or_none(item.get("a")),
+                                b=_float_or_none(item.get("b")),
+                                c=_float_or_none(item.get("c")),
+                                alpha=_float_or_none(item.get("alpha")),
+                                beta=_float_or_none(item.get("beta")),
+                                gamma=_float_or_none(item.get("gamma")),
+                                volume=_float_or_none(item.get("volume")),
+                                energy_above_hull=_float_or_none(item.get("energy_above_hull")),
+                                is_stable=bool(item.get("is_stable", False))
+                                if item.get("is_stable") is not None
+                                else None,
+                            )
+                        )
+                    self.last_cache_info = CacheStatus(
+                        cached=True, age=_format_cache_age(ts)
+                    )
+                    cached_results.sort(
+                        key=lambda r: (
+                            not bool(r.is_stable),
+                            float(r.energy_above_hull or 0.0),
+                        )
+                    )
+                    return cached_results
             except (OSError, json.JSONDecodeError, ValueError, KeyError) as exc:
                 logger.warning(f"Failed to read MP search cache {cache_file}: {exc}")
-                raw_docs = []
 
-        if not is_from_cache:
-            if not self.is_configured():
-                logger.warning(
-                    "Materials Project API key is missing. "
-                    "Please add MP_API_KEY to your .env file in the project root. "
-                    "Get your key at: https://materialsproject.org/dashboard"
-                )
-                self.last_cache_info = CacheStatus()
-                return []
-
+        self.last_cache_info = CacheStatus()
+        results = search_optimade_provider(
+            KNOWN_PROVIDERS["mp"],
+            filter,
+            limit=100,
+            timeout=float(self.timeout),
+            preserve_mp_id=True,
+        )
+        if results:
             try:
-                # The element filter stays here, where its single definition lives
-                # (ElementFilter); the bridge receives the resolved query and carries no
-                # copy of the chemistry.
-                if filter.strict:
-                    request: dict[str, Any] = {
-                        "action": "search",
-                        "api_key": self.api_key.strip(),
-                        "mode": "strict",
-                        "chemsys": chemsys,
-                    }
-                elif filter.all_of:
-                    request = {
-                        "action": "search",
-                        "api_key": self.api_key.strip(),
-                        "mode": "all",
-                        "elements": sorted(filter.all_of),
-                        "exclude_elements": sorted(filter.none_of),
-                    }
-                else:
-                    request = {
-                        "action": "search",
-                        "api_key": self.api_key.strip(),
-                        "mode": "any",
-                        "any_elements": sorted(filter.any_of),
-                        "exclude_elements": sorted(filter.none_of),
-                    }
-
-                serialized_records = list(run_mp_query(request)["records"])
-
-                raw_docs = serialized_records
-                try:
-                    cache_payload = {
-                        "timestamp": time.time(),
-                        "query_key": chemsys,
-                        "records": serialized_records,
-                    }
-                    cache_file.write_text(json.dumps(cache_payload, indent=2), encoding="utf-8")
-                except OSError as exc:
-                    logger.warning(f"Failed to write MP search cache {cache_file}: {exc}")
-            except (MaterialsProjectUnavailable, KeyError, TypeError) as exc:
-                logger.warning(f"Materials Project query failed: {exc}")
-                self.last_cache_info = CacheStatus()
-                return []
-
-        if is_from_cache:
-            self.last_cache_info = CacheStatus(cached=True, age=_format_cache_age(cache_mtime))
-        else:
-            self.last_cache_info = CacheStatus()
-
-        def _extract_field(doc_obj: Any, key: str, default: Any = None) -> Any:
-            if isinstance(doc_obj, dict):
-                return doc_obj.get(key, default)
-            return getattr(doc_obj, key, default)
-
-        results: list[StructureSearchRecord] = []
-        for doc in raw_docs:
-            mat_id = str(_extract_field(doc, "material_id", ""))
-            formula_str = str(_extract_field(doc, "formula_pretty", ""))
-            extracted = extract_elements(formula_str)
-            if not filter.matches(extracted):
-                continue
-            e_hull = float(_extract_field(doc, "energy_above_hull", 0.0) or 0.0)
-            is_st = bool(_extract_field(doc, "is_stable", False))
-            sym_obj = _extract_field(doc, "symmetry", None)
-            sg_sym = ""
-            if sym_obj:
-                sg_sym = str(
-                    getattr(sym_obj, "symbol", "")
-                    or (sym_obj.get("symbol") if isinstance(sym_obj, dict) else "")
-                    or sym_obj
+                cache_payload = {
+                    "timestamp": time.time(),
+                    "query_key": chemsys,
+                    "records": [r.to_dict() for r in results],
+                }
+                cache_file.write_text(
+                    json.dumps(cache_payload, indent=2), encoding="utf-8"
                 )
-            vol_val = _extract_field(doc, "volume", None)
-            vol = float(vol_val) if vol_val is not None else None
+            except OSError as exc:
+                logger.warning(f"Failed to write MP search cache {cache_file}: {exc}")
 
-            st = _extract_field(doc, "structure", None)
-            lat = getattr(st, "lattice", None) if st is not None else None
-            if lat is None and isinstance(st, dict):
-                lat = st.get("lattice")
-
-            if lat is not None:
-                a = _float_or_none(
-                    getattr(lat, "a", None) if not isinstance(lat, dict) else lat.get("a")
-                )
-                b = _float_or_none(
-                    getattr(lat, "b", None) if not isinstance(lat, dict) else lat.get("b")
-                )
-                c = _float_or_none(
-                    getattr(lat, "c", None) if not isinstance(lat, dict) else lat.get("c")
-                )
-                alpha = _float_or_none(
-                    getattr(lat, "alpha", None) if not isinstance(lat, dict) else lat.get("alpha")
-                )
-                beta = _float_or_none(
-                    getattr(lat, "beta", None) if not isinstance(lat, dict) else lat.get("beta")
-                )
-                gamma = _float_or_none(
-                    getattr(lat, "gamma", None) if not isinstance(lat, dict) else lat.get("gamma")
-                )
-            else:
-                a = b = c = alpha = beta = gamma = None
-
-            clean_mp_id = mat_id if mat_id.startswith("mp-") else f"mp-{mat_id}"
-            results.append(
-                StructureSearchRecord(
-                    id=clean_mp_id,
-                    source=DatabaseSource.MP,
-                    formula=formula_str,
-                    spacegroup=sg_sym,
-                    a=a,
-                    b=b,
-                    c=c,
-                    alpha=alpha,
-                    beta=beta,
-                    gamma=gamma,
-                    volume=vol,
-                    energy_above_hull=e_hull,
-                    is_stable=is_st,
-                )
-            )
-
-        results.sort(key=lambda r: (not bool(r.is_stable), float(r.energy_above_hull or 0.0)))
+        results.sort(
+            key=lambda r: (not bool(r.is_stable), float(r.energy_above_hull or 0.0))
+        )
         return results
 
     def download_cif(
@@ -873,11 +705,12 @@ class MaterialsProjectClient:
         formula_hint: str | None = None,
         symprec: float = 0.01,
     ) -> Path | None:
-        """Download structure, standardize to conventional cell, remove oxidation charges, and export clean CIF."""
+        """Download Materials Project structure via OPTIMADE v1, standardize cell, and export CIF."""
+        from optimade_client import download_optimade_cif
+
         safe_id = material_id.replace("/", "_")
         clean_id = safe_id if safe_id.startswith("mp-") else f"mp-{safe_id}"
 
-        # If cache exists for this ID with or without formula prefix
         cached_matches = list(self.cache_dir.glob(f"*{clean_id}.cif"))
         if cached_matches and cached_matches[0].stat().st_size > 0:
             cached_file = cached_matches[0]
@@ -888,40 +721,24 @@ class MaterialsProjectClient:
                 return dest
             return cached_file
 
-        if not self.is_configured():
-            logger.warning(
-                f"Cannot download {material_id}: Materials Project API key is not configured. "
-                "Please add MP_API_KEY to your .env file in the project root."
-            )
+        saved = download_optimade_cif(
+            f"optimade-mp-{clean_id}",
+            out_path=self.cache_dir,
+            symprec=symprec,
+            timeout=float(self.timeout),
+            formula_hint=formula_hint,
+        )
+        if saved is None or not saved.exists():
+            logger.warning(f"Failed to retrieve MP structure {clean_id} via OPTIMADE")
             return None
 
-        try:
-            answer = run_mp_query(
-                {
-                    "action": "download",
-                    "api_key": self.api_key.strip(),
-                    "material_id": clean_id,
-                    "symprec": symprec,
-                }
-            )
-
-            # The structure is fetched and standardized in the other environment and
-            # arrives as CIF text; the file is written here, in the directory this client
-            # owns as its cache, rather than wherever the other interpreter ran.
-            formula = formula_hint or str(answer.get("reduced_formula") or clean_id)
-            cif_name = f"{formula}_{clean_id}.cif"
-            cached_file = self.cache_dir / cif_name
-            cached_file.write_text(str(answer["cif_text"]), encoding="utf-8")
-            logger.info(f"Retrieved and sanitized MP entry {clean_id} -> {cached_file.name}")
-
-            if out_path:
-                dest = out_path / cif_name if out_path.is_dir() else out_path
-                dest.write_bytes(cached_file.read_bytes())
-                return dest
-            return cached_file
-        except (MaterialsProjectUnavailable, KeyError, OSError) as exc:
-            logger.warning(f"Failed to retrieve MP structure {material_id}: {exc}")
-            return None
+        logger.info(f"Retrieved MP entry {clean_id} via OPTIMADE -> {saved.name}")
+        if out_path:
+            dest = out_path / saved.name if out_path.is_dir() else out_path
+            if dest.resolve() != saved.resolve():
+                dest.write_bytes(saved.read_bytes())
+            return dest
+        return saved
 
 
 def get_effective_radius(element_symbol: str, cn: str | int | None = None) -> float:
@@ -1152,6 +969,17 @@ def search_cifs(
         all_results.extend(cod_records)
         cache_info["cod"] = getattr(cod_client, "last_cache_info", CacheStatus())
 
+    if source == DatabaseSource.OPTIMADE:
+        from optimade_client import search_optimade
+
+        opt_records = search_optimade(
+            filter,
+            providers=["mp", "alexandria_pbe", "alexandria_pbesol", "jarvis"],
+            limit=limit or 50,
+        )
+        all_results.extend(opt_records)
+        cache_info["optimade"] = CacheStatus(cached=False, age="live")
+
     total_count = len(all_results)
     if limit is not None and limit > 0:
         displayed_results = all_results[:limit]
@@ -1200,7 +1028,13 @@ def download_cifs_by_ids(
             continue
 
         cid_lower = cid.lower()
-        if cid_lower.startswith(("mp-", "mp_")):
+        if cid_lower.startswith(("optimade-", "agm", "jvasp-")):
+            from optimade_client import download_optimade_cif
+
+            path = download_optimade_cif(cid, out_path=out_dir)
+            if path and path.exists():
+                downloaded_paths.append(path)
+        elif cid_lower.startswith(("mp-", "mp_")):
             clean_id = cid[3:] if cid_lower.startswith("mp_") else cid
             path = mp_client.download_cif(clean_id, out_path=out_dir)
             if path and path.exists():
@@ -1420,9 +1254,9 @@ def main() -> int:
     )
     p_search.add_argument(
         "--source",
-        choices=["cod", "mp", "all"],
+        choices=["cod", "mp", "optimade", "all"],
         default="all",
-        help="Database source: cod, mp, or all (default: all)",
+        help="Database source: cod, mp, optimade (MP + Alexandria + JARVIS), or all (default: all)",
     )
     p_search.add_argument(
         "--limit",

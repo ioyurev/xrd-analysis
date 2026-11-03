@@ -2,7 +2,7 @@
 name: xrd-analysis
 description: Crystallographic analysis of powder X-ray diffraction data — search-match phase identification, Le Bail whole-pattern decomposition, Stage-Gate Rietveld refinement, and validation of a crystal-chemical model. Use this skill for any work with a measured diffractogram even if the user does not say XRD and asks to match this pattern, fit the lattice, check whether the sample is single-phase, explain extra peaks, or compare diffraction with thermodynamics or microscopy. Not for single-crystal structure solution or neutron data unless the user asks to treat it as a powder pattern.
 license: BSD-3-Clause
-compatibility: Requires Python 3.11+, uv, diffpy-srfit, cctbx-base, pymatgen, gemmi, spglib, scipy, xrdplot (figure rendering); the Materials Project client is optional and runs in a separate environment named by MP_PYTHON
+compatibility: Requires Python 3.11+, uv, diffpy-srfit, cctbx-base, pymatgen, gemmi, spglib, scipy.
 ---
 
 # XRD Crystallographic Analysis Skill
@@ -93,17 +93,21 @@ Reports $2\theta$ range, step size, SNR, low/high-angle FWHM, crystallinity grad
 
 ### 2. Search, Download & Generate Isostructural Analog CIFs (`cif_retriever.py`)
 Configures database access from `.env`:
-- `COD_HSRDB_PATH`: local SQLite archive of COD structures (`.hsrdb`, used automatically offline for `--source cod` / `all`, with transparent fallback to COD REST API);
-- `MP_API_KEY` + `MP_PYTHON`: Materials Project API key and retrieval Python interpreter.
+- `--source cod`: local SQLite archive of 511,583 COD structures (`COD_HSRDB_PATH` in `.env`, with transparent fallback to COD REST API);
+- `--source mp`: Materials Project (154k structures with $E_{\text{hull}}$, queried directly via the key-free OPTIMADE v1 gateway);
+- `--source optimade`: federated search across Materials Project, Alexandria PBE/PBEsol (6.2M DFT structures with $E_{\text{hull}}$), and JARVIS-DFT.
 
 ```bash
 # 1. Search structures by 3-way element filter (--all, --any, --none, --strict, --subfiles):
 uv run py .agents/skills/xrd-analysis/scripts/cif_retriever.py search \
   --all "Lu,O" --any "C,N,H" --strict --subfiles inorganic --source cod --limit 30
 
-# 2. Download CIFs by explicit IDs (cod-<id> or mp-<id>):
+uv run py .agents/skills/xrd-analysis/scripts/cif_retriever.py search \
+  --all "Sm,S" --strict --source optimade --limit 20
+
+# 2. Download CIFs by explicit IDs (cod-<id>, mp-<id>, or optimade-<provider>-<id>):
 uv run py .agents/skills/xrd-analysis/scripts/cif_retriever.py download \
-  --ids "cod-1537844,mp-1269" --out-dir ./cifs
+  --ids "cod-1537844,mp-1269,optimade-alexandria_pbe-agm001003285" --out-dir ./cifs
 
 # 3. Generate an isostructural analog (by Shannon radii or direct d-spacing scaling):
 uv run py .agents/skills/xrd-analysis/scripts/cif_retriever.py analog \

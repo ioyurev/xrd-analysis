@@ -60,3 +60,23 @@ def test_path_is_reported_for_every_consumer(monkeypatch, tmp_path):
 
     assert isinstance(loaded, Path)
     assert loaded.is_file()
+
+
+def test_version_ssot_consistency() -> None:
+    """Guarantee that pyproject.toml, CITATION.cff, and constants.VERSION stay in sync."""
+    import re
+    import tomllib
+
+    from constants import VERSION
+
+    skill_root = Path(__file__).resolve().parent.parent
+    with (skill_root / "pyproject.toml").open("rb") as f:
+        pyproject_ver = str(tomllib.load(f)["project"]["version"])
+
+    cff_text = (skill_root / "CITATION.cff").read_text(encoding="utf-8")
+    m_cff = re.search(r'^version:\s*["\']?([^"\'\s]+)["\']?', cff_text, re.MULTILINE)
+    assert m_cff is not None, "version field missing in CITATION.cff"
+    cff_ver = m_cff.group(1)
+
+    assert VERSION == pyproject_ver
+    assert cff_ver == pyproject_ver
